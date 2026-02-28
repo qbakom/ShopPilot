@@ -1,12 +1,16 @@
 /**
  * Product analysis component
- * Allows user to analyze current product page against their taste profile
+ * Allows user to analyze current product page against their taste profile.
+ * Shows interactive DNA list with per-item delete and reset.
  */
 
 import { useState, useEffect } from "react";
 import { useStore } from "~store";
-import { analyzeProduct } from "~api";
-import { Search, AlertCircle, RotateCcw, User } from "lucide-react";
+import { analyzeProduct, getUserProfile, deleteDnaItem, resetDna } from "~api";
+import { Search, AlertCircle, RotateCcw, User, Trash2 } from "lucide-react";
+import type { DnaItem } from "~types";
+
+const DNA_CAP = 50;
 
 export function ProductAnalysis() {
   const {
@@ -16,6 +20,8 @@ export function ProductAnalysis() {
     setAppState,
     setLoading,
     setError,
+    setDnaItems,
+    removeFavoriteItem,
     loading,
     error,
     reset
@@ -23,8 +29,21 @@ export function ProductAnalysis() {
 
   const [productDetected, setProductDetected] = useState(false);
   const [productTitle, setProductTitle] = useState('');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  // Check if we're on a product page
+  // Resolve DNA items: prefer structured dnaItems, fall back to favoriteItems
+  const dnaItems: DnaItem[] = userProfile?.dnaItems
+    ?? (userProfile?.favoriteItems ?? []).map((text, i) => ({ id: i, text }));
+
+  // Fetch structured DNA items on mount
+  useEffect(() => {
+    if (userProfile?.userId && !userProfile.dnaItems) {
+      getUserProfile(userProfile.userId)
+        .then((res) => setDnaItems(res.dna_items))
+        .catch(() => {}); // Silently fall back to favoriteItems
+    }
+  }, [userProfile?.userId]);
+
   useEffect(() => {
     checkForProduct();
   }, []);
@@ -32,17 +51,12 @@ export function ProductAnalysis() {
   const checkForProduct = async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
       if (!tab?.id) {
         setProductDetected(false);
         return;
       }
 
-      // Send message to content script
-      const response = await chrome.tabs.sendMessage(tab.id, {
-        action: 'extractProduct'
-      });
-
+      const response = await chrome.tabs.sendMessage(tab.id, { action: 'extractProduct' });
       if (response?.productData) {
         setProductDetected(true);
         setProductTitle(response.productData.title);
@@ -69,25 +83,22 @@ export function ProductAnalysis() {
       setAppState('analyzing');
 
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const response = await chrome.tabs.sendMessage(tab.id!, {
-        action: 'extractProduct'
-      });
+      const response = await chrome.tabs.sendMessage(tab.id!, { action: 'extractProduct' });
 
       if (!response?.productData) {
         throw new Error('Could not extract product information');
       }
 
       const { title, description } = response.productData;
-
       const result = await analyzeProduct(userProfile.userId, title, description);
 
       setMatchResult({
         matchScore: result.match_score,
         percentage: result.percentage,
         label: result.label,
-        reasoning: result.reasoning
+        reasoning: result.reasoning,
+        matchedItem: result.matched_item
       });
-
       setAppState('result');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to analyze product';
@@ -98,9 +109,29 @@ export function ProductAnalysis() {
     }
   };
 
-  const handleReset = () => {
-    if (confirm('Are you sure you want to reset your profile? You will need to re-calibrate.')) {
+  const handleDeleteDna = async (dnaId: number) => {
+    if (!userProfile?.userId) return;
+
+    try {
+      setDeletingId(dnaId);
+      await deleteDnaItem(userProfile.userId, dnaId);
+      removeFavoriteItem(dnaId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove item');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleResetDna = async () => {
+    if (!userProfile?.userId) return;
+    if (!confirm('This will remove ALL items from your Style DNA. Are you sure?')) return;
+
+    try {
+      await resetDna(userProfile.userId);
       reset();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset DNA');
     }
   };
 
@@ -119,20 +150,36 @@ export function ProductAnalysis() {
             </div>
           </div>
           <button
-            onClick={handleReset}
-            className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+            onClick={handleResetDna}
+            className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
           >
             <RotateCcw className="w-3 h-3" />
-            Reset
+            Reset All
           </button>
         </div>
 
-        {userProfile?.favoriteItems && (
-          <div className="pt-2 border-t border-gray-100 space-y-1">
-            <p className="text-xs font-medium text-gray-600">Your Style DNA:</p>
+        {dnaItems.length > 0 && (
+          <div className="pt-2 border-t border-gray-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-gray-600">Your Style DNA:</p>
+              <p className="text-xs text-gray-400">{dnaItems.length} / {DNA_CAP} items</p>
+            </div>
             <ul className="text-xs text-gray-500 space-y-1">
-              {userProfile.favoriteItems.map((item, idx) => (
-                <li key={idx} className="truncate">• {item}</li>
+              {dnaItems.map((item) => (
+                <li key={item.id} className="group flex items-center justify-between gap-2">
+                  <span className="truncate">• {item.text}</span>
+                  <button
+                    onClick={() => handleDeleteDna(item.id)}
+                    disabled={deletingId === item.id}
+                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all flex-shrink-0"
+                  >
+                    {deletingId === item.id ? (
+                      <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3 h-3" />
+                    )}
+                  </button>
+                </li>
               ))}
             </ul>
           </div>

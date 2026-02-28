@@ -2,10 +2,16 @@
  * Type definitions for SpecScout extension
  */
 
+export interface DnaItem {
+  id: number;
+  text: string;
+}
+
 export interface UserProfile {
   userId: string;
   favoriteItems: string[];
   calibrated: boolean;
+  dnaItems?: DnaItem[];
 }
 
 export interface ProductData {
@@ -19,6 +25,7 @@ export interface MatchResult {
   percentage: number;
   label: string;
   reasoning: string;
+  matchedItem: string;
 }
 
 export interface OnboardResponse {
@@ -33,6 +40,28 @@ export interface AnalyzeResponse {
   percentage: number;
   label: string;
   reasoning: string;
+  matched_item: string;
+}
+
+export interface DnaAddResponse {
+  message: string;
+  dna_count: number;
+}
+
+export interface DnaDeleteResponse {
+  message: string;
+  dna_count: number;
+}
+
+export interface DnaResetResponse {
+  message: string;
+  deleted_count: number;
+}
+
+export interface UserProfileResponse {
+  user_id: string;
+  dna_items: DnaItem[];
+  dna_count: number;
 }
 
 export type AppState =
@@ -50,6 +79,9 @@ export interface StoreState {
   currentProduct: ProductData | null;
   matchResult: MatchResult | null;
 
+  // DNA feedback loop
+  dnaAddSuccess: boolean;
+
   // UI state
   loading: boolean;
   error: string | null;
@@ -59,6 +91,10 @@ export interface StoreState {
   setAppState: (state: AppState) => void;
   setCurrentProduct: (product: ProductData | null) => void;
   setMatchResult: (result: MatchResult | null) => void;
+  setDnaAddSuccess: (success: boolean) => void;
+  addFavoriteItem: (item: string) => void;
+  removeFavoriteItem: (id: number) => void;
+  setDnaItems: (items: DnaItem[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   reset: () => void;

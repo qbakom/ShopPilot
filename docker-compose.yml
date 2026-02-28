@@ -1,0 +1,14 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - specscout-data:/app/data
+      - specscout-models:/root/.cache
+    environment:
+      - SPECSCOUT_DB_PATH=/app/data/specscout.db
+
+volumes:
+  specscout-data:
+  specscout-models:

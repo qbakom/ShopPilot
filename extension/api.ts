@@ -1,16 +1,20 @@
 /**
  * API service for communicating with SpecScout backend
- * Handles onboarding and product analysis requests
+ * Handles onboarding, product analysis, and DNA management
  */
 
-import type { OnboardResponse, AnalyzeResponse } from './types';
+import type {
+  OnboardResponse,
+  AnalyzeResponse,
+  DnaAddResponse,
+  DnaDeleteResponse,
+  DnaResetResponse,
+  UserProfileResponse,
+} from './types';
 
 // Backend API URL - configure based on environment
 const API_BASE_URL = process.env.PLASMO_PUBLIC_API_URL || 'http://localhost:8000';
 
-/**
- * Custom error class for API errors
- */
 export class APIError extends Error {
   constructor(
     message: string,
@@ -22,9 +26,6 @@ export class APIError extends Error {
   }
 }
 
-/**
- * Generic fetch wrapper with error handling
- */
 async function fetchAPI<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -53,8 +54,6 @@ async function fetchAPI<T>(
     if (error instanceof APIError) {
       throw error;
     }
-
-    // Network or other errors
     throw new APIError(
       error instanceof Error ? error.message : 'Network error occurred',
       undefined,
@@ -64,11 +63,11 @@ async function fetchAPI<T>(
 }
 
 /**
- * Onboard a new user with their favorite items
+ * Onboard a new user with 1-5 favorite items
  */
 export async function onboardUser(favoriteItems: string[]): Promise<OnboardResponse> {
-  if (favoriteItems.length !== 3) {
-    throw new Error('Exactly 3 favorite items are required');
+  if (favoriteItems.length < 1 || favoriteItems.length > 5) {
+    throw new Error('Between 1 and 5 favorite items are required');
   }
 
   return fetchAPI<OnboardResponse>('/onboard', {
@@ -85,13 +84,8 @@ export async function analyzeProduct(
   productTitle: string,
   productDescription: string
 ): Promise<AnalyzeResponse> {
-  if (!userId) {
-    throw new Error('User ID is required');
-  }
-
-  if (!productTitle || !productDescription) {
-    throw new Error('Product title and description are required');
-  }
+  if (!userId) throw new Error('User ID is required');
+  if (!productTitle || !productDescription) throw new Error('Product title and description are required');
 
   return fetchAPI<AnalyzeResponse>('/analyze', {
     method: 'POST',
@@ -101,6 +95,56 @@ export async function analyzeProduct(
       product_description: productDescription,
     }),
   });
+}
+
+/**
+ * Add a new item to the user's Style DNA
+ */
+export async function addToDna(
+  userId: string,
+  itemText: string
+): Promise<DnaAddResponse> {
+  if (!userId) throw new Error('User ID is required');
+
+  return fetchAPI<DnaAddResponse>('/dna/add', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, item_text: itemText }),
+  });
+}
+
+/**
+ * Delete a single DNA item by id
+ */
+export async function deleteDnaItem(
+  userId: string,
+  dnaId: number
+): Promise<DnaDeleteResponse> {
+  if (!userId) throw new Error('User ID is required');
+
+  return fetchAPI<DnaDeleteResponse>(`/dna/${dnaId}?user_id=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Reset (delete) all DNA items for a user
+ */
+export async function resetDna(userId: string): Promise<DnaResetResponse> {
+  if (!userId) throw new Error('User ID is required');
+
+  return fetchAPI<DnaResetResponse>('/dna/reset', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+/**
+ * Get user profile with structured DNA items
+ */
+export async function getUserProfile(userId: string): Promise<UserProfileResponse> {
+  if (!userId) throw new Error('User ID is required');
+
+  return fetchAPI<UserProfileResponse>(`/users/${encodeURIComponent(userId)}`);
 }
 
 /**

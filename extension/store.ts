@@ -4,13 +4,14 @@
  */
 
 import { create } from "zustand"
-import { persist, type StateStorage } from "zustand/middleware"
+import { persist, createJSONStorage } from "zustand/middleware"
 import type {
   StoreState,
   UserProfile,
   ProductData,
   MatchResult,
-  AppState
+  AppState,
+  DnaItem
 } from "./types"
 
 /**
@@ -18,7 +19,7 @@ import type {
  * Unlike localStorage, chrome.storage.local persists reliably
  * across extension restarts and service worker terminations.
  */
-const chromeStorage: StateStorage = {
+const chromeStorage = createJSONStorage<StoreState>(() => ({
   getItem: async (name: string) => {
     const result = await chrome.storage.local.get(name)
     return result[name] ?? null
@@ -29,7 +30,7 @@ const chromeStorage: StateStorage = {
   removeItem: async (name: string) => {
     await chrome.storage.local.remove(name)
   }
-}
+}))
 
 export const useStore = create<StoreState>()(
   persist(
@@ -39,6 +40,7 @@ export const useStore = create<StoreState>()(
       appState: "empty" as AppState,
       currentProduct: null,
       matchResult: null,
+      dnaAddSuccess: false,
       loading: false,
       error: null,
 
@@ -65,6 +67,49 @@ export const useStore = create<StoreState>()(
         })
       },
 
+      setDnaAddSuccess: (dnaAddSuccess: boolean) => {
+        set({ dnaAddSuccess })
+      },
+
+      addFavoriteItem: (item: string) => {
+        set((state) => {
+          if (!state.userProfile) return state
+          return {
+            userProfile: {
+              ...state.userProfile,
+              favoriteItems: [...state.userProfile.favoriteItems, item]
+            }
+          }
+        })
+      },
+
+      removeFavoriteItem: (id: number) => {
+        set((state) => {
+          if (!state.userProfile) return state
+          const dnaItems = (state.userProfile.dnaItems ?? []).filter((d) => d.id !== id)
+          return {
+            userProfile: {
+              ...state.userProfile,
+              dnaItems,
+              favoriteItems: dnaItems.map((d) => d.text)
+            }
+          }
+        })
+      },
+
+      setDnaItems: (items: DnaItem[]) => {
+        set((state) => {
+          if (!state.userProfile) return state
+          return {
+            userProfile: {
+              ...state.userProfile,
+              dnaItems: items,
+              favoriteItems: items.map((d) => d.text)
+            }
+          }
+        })
+      },
+
       setLoading: (loading: boolean) => {
         set({ loading })
       },
@@ -79,6 +124,7 @@ export const useStore = create<StoreState>()(
           appState: "empty",
           currentProduct: null,
           matchResult: null,
+          dnaAddSuccess: false,
           loading: false,
           error: null
         })
@@ -89,7 +135,7 @@ export const useStore = create<StoreState>()(
       storage: chromeStorage,
       partialize: (state) => ({
         userProfile: state.userProfile
-      })
+      }) as StoreState
     }
   )
 )

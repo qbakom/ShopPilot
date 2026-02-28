@@ -1,13 +1,38 @@
 /**
  * Match result component
- * Displays the product match score with visual gauge and insights
+ * Displays the product match score with visual gauge, matched DNA item, and
+ * an "Add to Style DNA" button for the feedback loop.
  */
 
+import { useState } from "react";
 import { useStore } from "~store";
-import { ArrowLeft, TrendingUp, TrendingDown, Minus, CheckCircle2 } from "lucide-react";
+import { addToDna } from "~api";
+import {
+  ArrowLeft,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  CheckCircle2,
+  Dna,
+  Plus,
+  Check
+} from "lucide-react";
 
 export function MatchResult() {
-  const { matchResult, currentProduct, setAppState, setMatchResult } = useStore();
+  const {
+    matchResult,
+    currentProduct,
+    userProfile,
+    dnaAddSuccess,
+    setAppState,
+    setMatchResult,
+    setDnaAddSuccess,
+    addFavoriteItem,
+    setError
+  } = useStore();
+
+  const [addingDna, setAddingDna] = useState(false);
+  const [dnaAddMessage, setDnaAddMessage] = useState('');
 
   if (!matchResult) {
     return null;
@@ -15,7 +40,29 @@ export function MatchResult() {
 
   const handleBack = () => {
     setMatchResult(null);
+    setDnaAddSuccess(false);
     setAppState('onboarded');
+  };
+
+  const handleAddToDna = async () => {
+    if (!userProfile?.userId || !currentProduct) return;
+
+    try {
+      setAddingDna(true);
+      const itemText = `${currentProduct.title}. ${currentProduct.description}`;
+      const res = await addToDna(userProfile.userId, itemText);
+      if (res.message.toLowerCase().includes('already exists')) {
+        setDnaAddMessage(res.message);
+      } else {
+        addFavoriteItem(currentProduct.title);
+        setDnaAddMessage(res.message);
+      }
+      setDnaAddSuccess(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add to Style DNA');
+    } finally {
+      setAddingDna(false);
+    }
   };
 
   const getScoreColor = (percentage: number) => {
@@ -141,6 +188,19 @@ export function MatchResult() {
         </div>
       </div>
 
+      {/* Best Style DNA Match */}
+      {matchResult.matchedItem && (
+        <div className="card bg-purple-50 border-purple-200 space-y-2">
+          <div className="flex items-center gap-2">
+            <Dna className="w-4 h-4 text-purple-600" />
+            <p className="text-xs font-medium text-purple-900">Best Style DNA Match</p>
+          </div>
+          <p className="text-sm text-purple-700 line-clamp-2">
+            {matchResult.matchedItem}
+          </p>
+        </div>
+      )}
+
       {/* Recommendation Card */}
       <div className={`card ${getScoreBgColor(matchResult.percentage)} border-2`}>
         <div className="space-y-2">
@@ -151,7 +211,7 @@ export function MatchResult() {
             {recommendation.message}
           </p>
           <p className="text-xs font-medium text-gray-600 pt-2 border-t border-gray-200">
-            💡 {recommendation.action}
+            {recommendation.action}
           </p>
         </div>
       </div>
@@ -182,6 +242,44 @@ export function MatchResult() {
           </div>
         </div>
       </div>
+
+      {/* Add to Style DNA */}
+      {currentProduct && !dnaAddSuccess && (
+        <button
+          onClick={handleAddToDna}
+          disabled={addingDna}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          {addingDna ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Adding...
+            </>
+          ) : (
+            <>
+              <Plus className="w-4 h-4" />
+              Add to My Style DNA
+            </>
+          )}
+        </button>
+      )}
+
+      {/* DNA Add Success */}
+      {dnaAddSuccess && (
+        <div className="card bg-green-50 border-green-200">
+          <div className="flex items-center gap-2">
+            <Check className="w-5 h-5 text-green-600" />
+            <p className="text-sm font-medium text-green-800">
+              {dnaAddMessage || 'Added to your Style DNA!'}
+            </p>
+          </div>
+          {!dnaAddMessage?.toLowerCase().includes('already exists') && (
+            <p className="text-xs text-green-600 mt-1">
+              Future analyses will use this product as a reference point.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Action Button */}
       <button

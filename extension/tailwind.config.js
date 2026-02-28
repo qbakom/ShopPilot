@@ -2,7 +2,6 @@
 module.exports = {
   content: [
     "./*.tsx",
-    "./sidepanel/**/*.{ts,tsx}",
     "./contents/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}"
   ],

@@ -1,377 +1,175 @@
 # SpecScout - AI Shopping Assistant
 
-> Overcome decision paralysis with AI-powered product matching based on your personal "Style DNA"
+> Score products against your personal "Style DNA" using semantic similarity
 
-SpecScout is a Chrome extension and backend API that helps you make confident shopping decisions by scoring products against your personal taste profile using advanced NLP and vector similarity matching.
+SpecScout is a Chrome extension + FastAPI backend that matches products to your taste profile. Describe items you love, then visit any product page and get an instant match score based on vector similarity.
 
-## 🎯 The Problem
-
-Online shopping is overwhelming:
-- Too many choices lead to decision paralysis
-- Generic recommendations don't match your taste
-- Hard to know if a product fits your style
-
-## 💡 The Solution
-
-SpecScout uses AI to:
-1. Learn your personal style from items you love
-2. Analyze any product against your taste profile
-3. Give you a match score with actionable insights
-
-## 🏗️ Architecture
+## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Chrome Extension                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   Onboarding │  │   Product    │  │    Match     │     │
-│  │     Form     │→ │   Analysis   │→ │    Result    │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-│         ↓                  ↓                                 │
-│  ┌────────────────────────────────────────────────┐        │
-│  │          Zustand State + Chrome Storage        │        │
-│  └────────────────────────────────────────────────┘        │
-└─────────────────────────────────────────────────────────────┘
-                            ↓ API Calls
-┌─────────────────────────────────────────────────────────────┐
-│                      FastAPI Backend                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   /onboard   │  │   /analyze   │  │   /health    │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-│         ↓                  ↓                                 │
-│  ┌────────────────────────────────────────────────┐        │
-│  │              AI Service Module                 │        │
-│  │  • Sentence Transformers (all-MiniLM-L6-v2)   │        │
-│  │  • Vector Embeddings (384-dim)                 │        │
-│  │  • Cosine Similarity Matching                  │        │
-│  └────────────────────────────────────────────────┘        │
-└─────────────────────────────────────────────────────────────┘
+You describe 1-5 items you love
+    |
+    v
+Each item -> sentence-transformers (all-MiniLM-L6-v2) -> 384-dim vector
+    |
+    v
+Vectors stored per-item in SQLite (no averaging/centroid)
+    |
+    v
+Visit a product page -> extension scrapes title + description
+    |
+    v
+Product text -> 384-dim vector -> cosine similarity vs EACH DNA vector
+    |
+    v
+Score = max(similarities) -> "89% match — similar to your white leather sneakers"
 ```
 
-## 🧠 How It Works
+**Why max per-item instead of centroid?** Averaging "minimalist sneakers" and "heavy boots" produces "medium shoe" — a style that doesn't exist. Max per-item preserves the nuance of each distinct taste.
 
-### The Math Behind the Magic
+## Architecture
 
-1. **User Onboarding** (Vectorization)
-   ```
-   Input: 3 favorite items (text descriptions)
-   ↓
-   Sentence Transformer (all-MiniLM-L6-v2)
-   ↓
-   3 vectors (384-dimensional each)
-   ↓
-   Mean Vector (Centroid) = User's "Style DNA"
-   ```
+```
+Chrome Extension (Plasmo + React + TypeScript + Tailwind + Zustand)
+  |
+  | POST /onboard, /analyze, /dna/add, DELETE /dna/{id}, POST /dna/reset
+  v
+FastAPI Backend (Python)
+  ├── ai_service.py   — sentence-transformers encoding + cosine similarity
+  ├── database.py     — SQLite (WAL mode), per-request connections
+  └── main.py         — API endpoints, CORS, dependency injection
+```
 
-2. **Product Analysis** (Similarity Matching)
-   ```
-   Input: Product title + description
-   ↓
-   Sentence Transformer
-   ↓
-   Product Vector (384-dimensional)
-   ↓
-   Cosine Similarity(User Vector, Product Vector)
-   ↓
-   Match Score (0-100%)
-   ```
-
-3. **Cosine Similarity Formula**
-   ```
-   similarity = (A · B) / (||A|| × ||B||)
-
-   Where:
-   - A = User's centroid vector
-   - B = Product vector
-   - Result ranges from -1 to 1 (normalized to 0-100%)
-   ```
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
-- Python 3.9+
-- Node.js 18+
+- Python 3.13+ with [uv](https://docs.astral.sh/uv/)
+- Node.js 22 LTS
 - Chrome browser
-- Git
 
-### Backend Setup
+### Backend
 
 ```bash
-# Navigate to backend
 cd backend
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the server
-python main.py
+SPECSCOUT_DEV=1 uv run uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Backend will run at `http://localhost:8000`
+First run downloads the ML model (~90MB). Subsequent starts are fast.
 
-### Extension Setup
+### Extension
 
 ```bash
-# Navigate to extension
 cd extension
-
-# Install dependencies
 npm install
-
-# Create environment file
 cp .env.example .env
-
-# Start development build
-npm run dev
+npm run build
 ```
 
-### Load Extension in Chrome
+### Load in Chrome
 
-1. Open `chrome://extensions/`
-2. Enable "Developer mode"
-3. Click "Load unpacked"
-4. Select `extension/build/chrome-mv3-dev`
+1. Go to `chrome://extensions`
+2. Enable **Developer mode** (top right)
+3. Click **Load unpacked**
+4. Select `extension/build/chrome-mv3-prod`
+5. Click the SpecScout icon to open the side panel
 
-## 📖 Usage Guide
+### Docker (backend only)
 
-### Step 1: Calibrate Your Taste
+```bash
+docker compose up --build
+```
 
-1. Click the SpecScout icon in Chrome
-2. Open the side panel
-3. Enter 3 items you absolutely love:
-   ```
-   Example:
-   - Black minimalist gore-tex jacket with hidden pockets
-   - Merino wool crew neck sweater in charcoal grey
-   - Japanese selvedge denim jeans with subtle fading
-   ```
-4. Click "Calibrate My Taste"
+## Usage
 
-### Step 2: Analyze Products
+1. **Calibrate** — Enter 1-5 items you love (be specific: materials, colors, style)
+2. **Browse** — Visit any product page (Amazon, Nike, etc.)
+3. **Analyze** — Open side panel, click "Analyze This Product"
+4. **Grow** — Click "Add to My Style DNA" on products you like (up to 50 items)
+5. **Manage** — Delete individual DNA items or reset all from the profile view
 
-1. Visit any product page (Amazon, eBay, etc.)
-2. Open SpecScout side panel
-3. Click "Analyze This Product"
-4. Get instant match score!
+## API Endpoints
 
-### Step 3: Make Confident Decisions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/onboard` | Create user with 1-5 favorite items |
+| `POST` | `/analyze` | Score a product against user's DNA |
+| `POST` | `/dna/add` | Add item to DNA (50 cap, deduplication) |
+| `DELETE` | `/dna/{id}?user_id=` | Remove single DNA item |
+| `POST` | `/dna/reset` | Remove all DNA items |
+| `GET` | `/users/{user_id}` | Get user profile with DNA items |
+| `GET` | `/health` | Health check |
 
-- **85-100%**: Perfect Match - Buy with confidence
-- **70-84%**: Great Fit - Highly recommended
-- **55-69%**: Good Alternative - Worth considering
-- **40-54%**: Moderate Match - Explore if curious
-- **0-39%**: Not Your Style - Probably skip
+Interactive docs at `http://localhost:8000/docs` when backend is running.
 
-## 📁 Project Structure
+### Example
+
+```bash
+# Onboard
+USER_ID=$(curl -s -X POST http://localhost:8000/onboard \
+  -H "Content-Type: application/json" \
+  -d '{"favorite_items": ["white minimalist leather sneakers", "black techwear cargo pants"]}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['user_id'])")
+
+# Analyze
+curl -s -X POST http://localhost:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d "{\"user_id\": \"$USER_ID\", \"product_title\": \"Nike Air Force 1\", \"product_description\": \"Classic white leather sneaker\"}"
+
+# {"match_score": 0.896, "percentage": 89.6, "label": "Perfect Match",
+#  "matched_item": "white minimalist leather sneakers", ...}
+```
+
+## Match Score Labels
+
+| Score | Label | Meaning |
+|-------|-------|---------|
+| 85-100% | Perfect Match | Strongly aligns with your style |
+| 70-84% | Great Fit | Good match, worth buying |
+| 55-69% | Good Alternative | Some overlap, consider it |
+| 40-54% | Moderate Match | Diverges from your taste |
+| 0-39% | Not Your Style | Probably skip |
+
+## Project Structure
 
 ```
 ShopPilot/
-├── backend/                    # FastAPI backend
-│   ├── main.py                # API endpoints
-│   ├── ai_service.py          # ML logic
-│   ├── requirements.txt       # Python dependencies
-│   └── README.md              # Backend docs
-│
-├── extension/                  # Chrome extension
-│   ├── sidepanel/             # Side panel UI
-│   │   └── index.tsx          # Main panel component
-│   ├── components/            # React components
-│   │   ├── OnboardingForm.tsx
-│   │   ├── ProductAnalysis.tsx
-│   │   └── MatchResult.tsx
-│   ├── contents/              # Content scripts
-│   │   └── extract-product.ts # Product data extraction
-│   ├── store.ts               # State management
-│   ├── api.ts                 # Backend client
-│   ├── types.ts               # TypeScript types
-│   ├── package.json
-│   └── README.md              # Extension docs
-│
-└── README.md                   # This file
+├── backend/
+│   ├── main.py              # FastAPI app, all endpoints
+│   ├── ai_service.py         # Sentence transformer + similarity
+│   ├── database.py           # SQLite CRUD, vector serialization
+│   ├── pyproject.toml         # Python deps (uv)
+│   ├── requirements.txt       # Python deps (pip fallback)
+│   ├── Dockerfile
+│   └── .dockerignore
+├── extension/
+│   ├── sidepanel.tsx          # Main side panel UI
+│   ├── popup.tsx              # Popup (opens side panel)
+│   ├── background.ts          # Service worker
+│   ├── components/
+│   │   ├── OnboardingForm.tsx  # 1-5 item calibration form
+│   │   ├── ProductAnalysis.tsx # Product detection + DNA management
+│   │   └── MatchResult.tsx     # Score display + "Add to DNA" button
+│   ├── contents/
+│   │   └── extract-product.ts  # Content script (scrapes product pages)
+│   ├── store.ts               # Zustand + chrome.storage
+│   ├── api.ts                 # Backend API client
+│   ├── types.ts               # TypeScript interfaces
+│   └── package.json
+├── docker-compose.yml
+└── README.md
 ```
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-### Backend
-- **FastAPI**: Modern Python web framework
-- **Sentence Transformers**: State-of-the-art NLP embeddings
-- **Scikit-learn**: Cosine similarity calculations
-- **Uvicorn**: ASGI server
+| Layer | Technology |
+|-------|-----------|
+| Extension | Plasmo 0.90, React 18, TypeScript, Tailwind CSS, Zustand |
+| Backend | FastAPI, Uvicorn, Python 3.13 |
+| AI | sentence-transformers (all-MiniLM-L6-v2), scikit-learn |
+| Storage | SQLite (WAL mode), chrome.storage.local |
+| Deploy | Docker multi-stage (python:3.13-slim + uv) |
 
-### Frontend
-- **Plasmo**: Modern extension framework
-- **React**: UI library
-- **TypeScript**: Type safety
-- **Tailwind CSS**: Styling
-- **Zustand**: State management
-- **Lucide React**: Icons
+## CORS
 
-## 🎨 Features
-
-### MVP Features (Current)
-- ✅ User taste calibration with 3 favorite items
-- ✅ Automatic product detection
-- ✅ AI-powered match scoring
-- ✅ Visual match results
-- ✅ Side panel UI
-- ✅ Chrome storage persistence
-
-### Future Enhancements
-- 🔄 Historical analysis tracking
-- 🔄 Style evolution over time
-- 🔄 Multi-category profiles (fashion, tech, home)
-- 🔄 Collaborative filtering
-- 🔄 Price/value analysis
-- 🔄 Browser notifications
-- 🔄 Wishlist integration
-
-## 🧪 Testing
-
-### Backend Testing
-
-```bash
-cd backend
-
-# Test onboarding endpoint
-curl -X POST http://localhost:8000/onboard \
-  -H "Content-Type: application/json" \
-  -d '{
-    "favorite_items": [
-      "Black leather jacket",
-      "Minimalist watch",
-      "White sneakers"
-    ]
-  }'
-
-# Test analysis endpoint (use user_id from above)
-curl -X POST http://localhost:8000/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "YOUR_USER_ID",
-    "product_title": "Slim Fit Denim Jacket",
-    "product_description": "Classic blue denim jacket with modern slim fit"
-  }'
-```
-
-### Extension Testing
-
-1. Visit test e-commerce sites
-2. Check DevTools Console for errors
-3. Test on different product page layouts
-4. Verify state persistence across sessions
-
-## 📊 API Documentation
-
-Once the backend is running, visit:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-### Key Endpoints
-
-#### POST /onboard
-Create user taste profile
-
-**Request:**
-```json
-{
-  "favorite_items": ["item1", "item2", "item3"]
-}
-```
-
-**Response:**
-```json
-{
-  "user_id": "uuid",
-  "message": "Taste profile created successfully",
-  "calibrated": true,
-  "favorite_items": [...]
-}
-```
-
-#### POST /analyze
-Analyze product match
-
-**Request:**
-```json
-{
-  "user_id": "uuid",
-  "product_title": "Product Name",
-  "product_description": "Product details..."
-}
-```
-
-**Response:**
-```json
-{
-  "match_score": 0.87,
-  "percentage": 87.0,
-  "label": "Perfect Match",
-  "reasoning": "Based on your style preferences..."
-}
-```
-
-## 🔐 Security & Privacy
-
-- User data stored locally in Chrome storage
-- API uses in-memory storage (MVP only)
-- No personal data collection
-- No tracking or analytics
-- All processing done client-side and server-side (no third parties)
-
-## 🚀 Deployment
-
-### Backend (Production)
-
-```bash
-# Build Docker image
-cd backend
-docker build -t specscout-api .
-
-# Deploy to cloud (AWS, GCP, Azure, etc.)
-# Update extension API URL to production endpoint
-```
-
-### Extension (Chrome Web Store)
-
-```bash
-cd extension
-npm run build
-npm run package
-
-# Upload zip to Chrome Web Store
-# https://chrome.google.com/webstore/devconsole
-```
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📝 License
-
-MIT License - see LICENSE file for details
-
-## 🙏 Acknowledgments
-
-- Sentence Transformers team for the amazing models
-- Plasmo framework for modern extension development
-- FastAPI for the excellent Python framework
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/ShopPilot/issues)
-- **Docs**: See `/backend/README.md` and `/extension/README.md`
-
----
-
-**Built with ❤️ using AI and modern web technologies**
+Production mode restricts origins to `chrome-extension://*`. Set `SPECSCOUT_DEV=1` to allow all origins during development.

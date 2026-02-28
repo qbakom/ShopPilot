@@ -1,16 +1,18 @@
 /**
  * Onboarding form component
- * Collects 3 favorite items from user to calibrate their taste profile
+ * Collects 1-5 favorite items from user to calibrate their taste profile
  */
 
 import { useState } from "react";
 import { useStore } from "~store";
 import { onboardUser } from "~api";
-import { ShoppingBag, Sparkles } from "lucide-react";
+import { ShoppingBag, Sparkles, Plus, Trash2 } from "lucide-react";
+
+const MAX_ITEMS = 5;
 
 export function OnboardingForm() {
   const { setUserProfile, setLoading, setError, loading, error } = useStore();
-  const [items, setItems] = useState(['', '', '']);
+  const [items, setItems] = useState<string[]>(['']);
 
   const handleInputChange = (index: number, value: string) => {
     const newItems = [...items];
@@ -18,13 +20,24 @@ export function OnboardingForm() {
     setItems(newItems);
   };
 
+  const addField = () => {
+    if (items.length < MAX_ITEMS) {
+      setItems([...items, '']);
+    }
+  };
+
+  const removeField = (index: number) => {
+    if (items.length > 1) {
+      setItems(items.filter((_, i) => i !== index));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate all fields filled
-    const validItems = items.filter(item => item.trim().length > 0);
-    if (validItems.length !== 3) {
-      setError('Please describe all 3 favorite items');
+    const validItems = items.map(i => i.trim()).filter(i => i.length > 0);
+    if (validItems.length < 1) {
+      setError('Please describe at least 1 favorite item');
       return;
     }
 
@@ -32,15 +45,13 @@ export function OnboardingForm() {
       setLoading(true);
       setError(null);
 
-      const response = await onboardUser(items);
+      const response = await onboardUser(validItems);
 
       setUserProfile({
         userId: response.user_id,
         favoriteItems: response.favorite_items,
         calibrated: response.calibrated
       });
-
-      // Success - state will automatically transition to 'onboarded'
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to create profile';
       setError(errorMessage);
@@ -48,6 +59,8 @@ export function OnboardingForm() {
       setLoading(false);
     }
   };
+
+  const filledCount = items.filter(i => i.trim().length > 0).length;
 
   return (
     <div className="p-6 space-y-6">
@@ -71,7 +84,7 @@ export function OnboardingForm() {
           <div className="space-y-1">
             <p className="text-sm font-medium text-blue-900">How it works</p>
             <p className="text-xs text-blue-700">
-              Describe 3 items you absolutely love. Be specific about style, material,
+              Describe 1-5 items you absolutely love. Be specific about style, material,
               color, or features. This helps us understand your taste.
             </p>
           </div>
@@ -81,23 +94,47 @@ export function OnboardingForm() {
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-4">
-          {[0, 1, 2].map((index) => (
+          {items.map((item, index) => (
             <div key={index} className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Favorite Item #{index + 1}
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-sm font-medium text-gray-700">
+                  Favorite Item #{index + 1}
+                </label>
+                {items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeField(index)}
+                    className="text-gray-400 hover:text-red-500 transition-colors"
+                    disabled={loading}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
               <textarea
-                value={items[index]}
+                value={item}
                 onChange={(e) => handleInputChange(index, e.target.value)}
-                placeholder={`e.g., Black minimalist gore-tex jacket with hidden pockets`}
+                placeholder="e.g., Black minimalist gore-tex jacket with hidden pockets"
                 className="input-field resize-none"
                 rows={2}
                 disabled={loading}
-                required
               />
             </div>
           ))}
         </div>
+
+        {/* Add item button */}
+        {items.length < MAX_ITEMS && (
+          <button
+            type="button"
+            onClick={addField}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:border-primary-400 hover:text-primary-600 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add another item ({items.length}/{MAX_ITEMS})
+          </button>
+        )}
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
@@ -107,7 +144,7 @@ export function OnboardingForm() {
 
         <button
           type="submit"
-          disabled={loading || items.some(item => !item.trim())}
+          disabled={loading || filledCount < 1}
           className="btn-primary w-full"
         >
           {loading ? (
@@ -116,7 +153,7 @@ export function OnboardingForm() {
               Creating Profile...
             </span>
           ) : (
-            'Calibrate My Taste'
+            `Calibrate My Taste (${filledCount} item${filledCount !== 1 ? 's' : ''})`
           )}
         </button>
       </form>

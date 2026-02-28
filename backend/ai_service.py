@@ -6,11 +6,14 @@ Uses sentence-transformers for encoding text into embeddings
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+MODEL_NAME = "all-MiniLM-L6-v2"
 
 
 class AIService:
@@ -21,7 +24,7 @@ class AIService:
     Model produces 384-dimensional vectors.
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = MODEL_NAME):
         """
         Initialize the AI service with a sentence transformer model.
 
@@ -30,7 +33,12 @@ class AIService:
         """
         logger.info(f"Loading model: {model_name}")
         self.model = SentenceTransformer(model_name)
+        self.model_name = model_name
         logger.info("Model loaded successfully")
+
+    def encode_single_text(self, text: str) -> np.ndarray:
+        """Encode a single text string into a vector embedding."""
+        return self.model.encode([text], convert_to_numpy=True)[0]
 
     def encode_texts(self, texts: List[str]) -> np.ndarray:
         """
@@ -245,6 +253,80 @@ class AIService:
             return (
                 f"This product doesn't closely match any of your favorites. "
                 f'Closest is your "{best_short}" at {best_pct}%, '
+                f"suggesting it's outside your usual style."
+            )
+
+
+    def analyze_product_max_sim(
+        self,
+        dna_items: List[Tuple[str, np.ndarray]],
+        product_title: str,
+        product_description: str,
+    ) -> Dict:
+        """
+        Analyze a product using max per-item similarity instead of centroid.
+
+        For each DNA item vector, compute cosine similarity against the product
+        vector and take the maximum. This preserves nuance — a user who likes
+        both "minimalist sneakers" and "heavy boots" won't average to "medium shoe".
+
+        Args:
+            dna_items: List of (item_text, vector) tuples from the user's Style DNA
+            product_title: Product page title
+            product_description: Product page description
+
+        Returns:
+            Dict with match_score, percentage, label, reasoning, matched_item
+        """
+        product_text = f"{product_title}. {product_description}"
+        product_vector = self.encode_single_text(product_text)
+
+        best_score = 0.0
+        best_item_text = ""
+        for item_text, item_vector in dna_items:
+            score = self.calculate_similarity(item_vector, product_vector)
+            if score > best_score:
+                best_score = score
+                best_item_text = item_text
+
+        label = self.get_match_label(best_score)
+        reasoning = self._build_reasoning_max_sim(
+            product_title, best_score, best_item_text, label
+        )
+
+        return {
+            "match_score": best_score,
+            "percentage": round(best_score * 100, 1),
+            "label": label,
+            "reasoning": reasoning,
+            "matched_item": best_item_text,
+        }
+
+    def _build_reasoning_max_sim(
+        self,
+        product_title: str,
+        score: float,
+        matched_item: str,
+        label: str,
+    ) -> str:
+        """Build reasoning string referencing the specific matched DNA item."""
+        short = matched_item[:60] + "..." if len(matched_item) > 60 else matched_item
+        pct = round(score * 100)
+
+        if score >= 0.70:
+            return (
+                f'"{product_title}" is most similar to your "{short}" '
+                f"({pct}% match). It aligns well with your style."
+            )
+        elif score >= 0.55:
+            return (
+                f'This product shares some qualities with your "{short}" '
+                f"({pct}% match), but isn't a strong overlap."
+            )
+        else:
+            return (
+                f"This product doesn't closely match any of your favorites. "
+                f'Closest is your "{short}" at {pct}%, '
                 f"suggesting it's outside your usual style."
             )
 

@@ -5,12 +5,12 @@
   "description": "AI-powered shopping assistant that matches products to your personal style",
   "author": "SpecScout Team",
   "scripts": {
-    "dev": "plasmo dev",
-    "build": "plasmo build",
+    "dev": "node fix-paths.js --watch & plasmo dev",
+    "build": "plasmo build && node fix-paths.js",
     "package": "plasmo package"
   },
   "dependencies": {
-    "plasmo": "^0.84.0",
+    "plasmo": "^0.90.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "zustand": "^4.5.0",
@@ -34,9 +34,6 @@
       "activeTab",
       "storage",
       "sidePanel"
-    ],
-    "side_panel": {
-      "default_path": "sidepanel/index.html"
-    }
+    ]
   }
 }
