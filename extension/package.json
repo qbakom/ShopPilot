@@ -5,8 +5,9 @@
   "description": "AI-powered shopping assistant that matches products to your personal style",
   "author": "SpecScout Team",
   "scripts": {
-    "dev": "node fix-paths.js --watch & plasmo dev",
+    "dev": "node fix-paths.js --poll & plasmo dev",
     "build": "plasmo build && node fix-paths.js",
+    "fix": "node fix-paths.js",
     "package": "plasmo package"
   },
   "dependencies": {

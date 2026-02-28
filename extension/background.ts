@@ -11,7 +11,7 @@ chrome.sidePanel
 // Set side panel options on install
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setOptions({
-    path: "sidepanel/index.html",
+    path: "sidepanel.html",
     enabled: true
   })
 })
