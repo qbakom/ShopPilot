@@ -153,12 +153,57 @@ function extractDescription(): string {
 }
 
 /**
- * Check if current page is likely a product page
+ * Check if current page is a single product page (not a listing/category)
  */
-function isProductPage(): boolean {
+function classifyPage(): PageType {
   const url = window.location.href.toLowerCase();
 
-  // Common product URL patterns for major e-commerce sites
+  // ── Step 1: Check if page has multiple product-like cards ──
+  // This is the most reliable listing indicator, regardless of URL pattern.
+  // A "product card" is typically a link containing both an image and a price/title.
+  const productCardSelectors = [
+    // Explicit product card classes
+    '[class*="product-card"]', '[class*="product-tile"]', '[class*="product-item"]',
+    '[class*="ProductCard"]', '[class*="ProductTile"]', '[class*="ProductItem"]',
+    '[data-testid*="product-card"]', '[data-testid*="product-tile"]',
+    // Grid children that are links (common e-commerce pattern)
+    '[class*="product-grid"] > *', '[class*="product-list"] > *',
+    '[class*="products-grid"] > *', '[class*="catalog"] > *',
+  ];
+  const explicitCards = document.querySelectorAll(productCardSelectors.join(', '));
+  if (explicitCards.length >= 3) return 'listing';
+
+  // Heuristic: count <a> tags that contain both an <img> and a price-like pattern  
+  const allLinks = document.querySelectorAll('a[href]');
+  let productLinkCount = 0;
+  for (const link of allLinks) {
+    const hasImage = link.querySelector('img') !== null;
+    const text = link.textContent || '';
+    // Price patterns: $XX, XX zł, €XX, XX.XX, XX,XX (with currency context)
+    const hasPrice = /(\$|€|£|zł|pln|usd|eur)\s*\d|\d+[.,]\d{2}\s*(zł|pln|usd|eur|\$|€|£)/i.test(text);
+    if (hasImage && hasPrice) productLinkCount++;
+    if (productLinkCount >= 3) return 'listing';
+  }
+
+  // ── Step 2: URL-based listing patterns ──
+  const listingPatterns = [
+    /\/categor/,
+    /\/collection/,
+    /\/search/,
+    /\/s\?/,           // Amazon search
+    /\/w\//,            // Nike category
+    /[?&]q=/,           // Search query params
+    /\/browse\//,
+    /\/c\//,            // Generic category
+    /\/shop\//,         // Shop sections
+    /\/(men|women|kids|unisex|meskie|damskie|dzieciece)/i, // Gender categories
+    /\/(shoes|clothing|bags|jackets|pants|shirts|kurtki|buty|spodnie)/i, // Product type categories
+  ];
+  if (listingPatterns.some(p => p.test(url))) {
+    return 'listing';
+  }
+
+  // ── Step 3: Single product page indicators ──
   const productPatterns = [
     /\/product\//,
     /\/item\//,
@@ -166,7 +211,6 @@ function isProductPage(): boolean {
     /\/dp\//,       // Amazon
     /\/gp\/product/, // Amazon
     /\/products\//,
-    /\/shop\//,
     /\/t\//,         // Nike
     /\/pd\//,        // Adidas
     /\/ip\//,        // Walmart
@@ -176,50 +220,41 @@ function isProductPage(): boolean {
     /\/buy\//,
   ];
 
-  // Check URL patterns
   if (productPatterns.some(pattern => pattern.test(url))) {
-    return true;
+    return 'product';
   }
 
-  // Check for product schema markup (JSON-LD or microdata)
+  // Check for Product schema markup (JSON-LD or microdata)
   const schemaProduct = document.querySelector('[itemtype*="Product"]');
-  if (schemaProduct) {
-    return true;
-  }
+  if (schemaProduct) return 'product';
 
-  // Check JSON-LD structured data for Product type
   const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]');
   for (const script of jsonLdScripts) {
     try {
       const data = JSON.parse(script.textContent || '');
-      const type = data['@type'] || (Array.isArray(data['@graph']) && data['@graph'].find((n: any) => n['@type'] === 'Product'));
-      if (type === 'Product' || type) {
-        return true;
-      }
-    } catch { /* ignore parse errors */ }
+      if (data['@type'] === 'Product') return 'product';
+      if (Array.isArray(data['@graph']) && data['@graph'].some((n: any) => n['@type'] === 'Product')) return 'product';
+    } catch { /* ignore */ }
   }
 
-  // Check for common e-commerce indicators (broader selectors)
-  const hasProductIndicators =
-    document.querySelector('[class*="add-to-cart"]') ||
-    document.querySelector('[class*="add-to-bag"]') ||
-    document.querySelector('[class*="buy-now"]') ||
-    document.querySelector('[class*="product-price"]') ||
-    document.querySelector('[itemprop="price"]') ||
-    document.querySelector('[data-testid*="add-to-cart"]') ||
-    document.querySelector('[data-testid*="add-to-bag"]') ||
-    document.querySelector('button[aria-label*="cart" i]') ||
-    document.querySelector('button[aria-label*="koszyk" i]') ||
-    document.querySelector('button[aria-label*="bag" i]');
+  // Single add-to-cart button = product page
+  const cartButtons = document.querySelectorAll(
+    '[class*="add-to-cart"], [class*="add-to-bag"], [class*="buy-now"], ' +
+    '[data-testid*="add-to-cart"], [data-testid*="add-to-bag"], ' +
+    'button[aria-label*="cart" i], button[aria-label*="koszyk" i], button[aria-label*="bag" i], ' +
+    '[itemprop="price"]'
+  );
+  if (cartButtons.length > 0) return 'product';
 
-  return Boolean(hasProductIndicators);
+  return 'unknown';
 }
 
 /**
  * Extract complete product data from the page
  */
 export function extractProductData(): ProductData | null {
-  if (!isProductPage()) {
+  const pageType = classifyPage();
+  if (pageType !== 'product') {
     return null;
   }
 
@@ -238,16 +273,241 @@ export function extractProductData(): ProductData | null {
   };
 }
 
-// Listen for messages from side panel
+// ─── Product Picker (for listing/category pages) ─────────────────────
+
+/**
+ * Find the nearest product-like ancestor element (card/tile/link)
+ */
+function findProductAncestor(el: Element): Element | null {
+  let current: Element | null = el;
+  for (let i = 0; i < 10 && current; i++) {
+    const tag = current.tagName.toLowerCase();
+    const cls = current.className?.toString?.() || '';
+    const href = current.getAttribute('href') || '';
+    const testId = current.getAttribute('data-testid') || '';
+    
+    const isProductCard =
+      // Class-based detection
+      cls.match(/product|card|tile|item(?!s)|grid-cell|catalog-item/i) ||
+      // Link to a product page
+      (tag === 'a' && href.match(/\/product|\/p\/|\/dp\/|\/t\/|\/pd\/|\/item|\/itm|kurtka|buty|spodnie/i)) ||
+      // Data attributes
+      testId.match(/product|card|tile/i) ||
+      // An <a> with an <img> inside + some text (generic product card heuristic)
+      (tag === 'a' && current.querySelector('img') && (current.textContent?.trim()?.length ?? 0) > 5);
+
+    if (isProductCard) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Extract product info from a selected product card element
+ */
+function extractFromCard(card: Element): ProductData {
+  // Try to find a link to the product
+  const link = card.tagName === 'A' ? card : card.querySelector('a[href]');
+  const url = link?.getAttribute('href') || window.location.href;
+  const fullUrl = url.startsWith('http') ? url : new URL(url, window.location.origin).href;
+
+  // ── Extract title ──
+  // Look for headings or title-like elements FIRST (these usually have clean text)
+  let title = '';
+  const titleSelectors = [
+    'h1', 'h2', 'h3', 'h4',
+    '[class*="title"]', '[class*="name"]:not([class*="user"]):not([class*="brand"])',
+    '[data-testid*="title"]', '[data-testid*="name"]'
+  ];
+  for (const sel of titleSelectors) {
+    const el = card.querySelector(sel);
+    if (el?.textContent?.trim() && el.textContent.trim().length > 3) {
+      title = el.textContent.trim();
+      break;
+    }
+  }
+  // Fallback: aria-label
+  if (!title && link?.getAttribute('aria-label')) {
+    title = link.getAttribute('aria-label')!.trim();
+  }
+  if (!title && card.getAttribute('aria-label')) {
+    title = card.getAttribute('aria-label')!.trim();
+  }
+  // Last resort: first text-only child elements (avoid grabbing prices)
+  if (!title) {
+    const texts = Array.from(card.querySelectorAll('span, p, div'))
+      .map(el => el.textContent?.trim())
+      .filter(t => t && t.length > 3 && t.length < 100 && !/^\d+[.,]/.test(t) && !/^\$|€|£/.test(t));
+    title = texts[0] || 'Selected Product';
+  }
+
+  // ── Extract description ──
+  // Gather color, subtitle, category, and image alt text as features
+  const descParts: string[] = [];
+  const descSelectors = [
+    '[class*="subtitle"]', '[class*="color"]', '[class*="description"]',
+    '[class*="detail"]', '[class*="category"]', '[class*="variant"]'
+  ];
+  for (const sel of descSelectors) {
+    const el = card.querySelector(sel);
+    const text = el?.textContent?.trim();
+    if (text && text !== title && !descParts.includes(text)) {
+      descParts.push(text);
+    }
+  }
+  // Add alt text from images (often descriptive)
+  const img = card.querySelector('img');
+  if (img?.alt && img.alt !== title && img.alt.length > 3) {
+    descParts.push(img.alt);
+  }
+  // Add price as context
+  const priceEl = card.querySelector('[class*="price"], [class*="Price"], [data-testid*="price"]');
+  if (priceEl?.textContent?.trim()) {
+    descParts.push('Price: ' + priceEl.textContent.trim());
+  }
+
+  const description = descParts.length > 0 ? descParts.join('. ') : title;
+
+  return {
+    title,
+    description,
+    url: fullUrl
+  };
+}
+
+/**
+ * Create the picker overlay and highlight elements
+ */
+function createPickerUI() {
+  // Semi-transparent overlay instructions
+  pickerOverlay = document.createElement('div');
+  pickerOverlay.id = 'specscout-picker-overlay';
+  pickerOverlay.innerHTML = `
+    <div style="
+      position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 2147483647;
+      background: #0ea5e9; color: white; padding: 12px 24px; border-radius: 12px;
+      font-family: system-ui, sans-serif; font-size: 14px; font-weight: 600;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3); pointer-events: none;
+      display: flex; align-items: center; gap: 8px;
+    ">
+      <span style="font-size: 18px;">🎯</span>
+      Click on a product to analyze it
+      <span style="opacity: 0.7; font-weight: 400; margin-left: 8px;">ESC to cancel</span>
+    </div>
+  `;
+  document.body.appendChild(pickerOverlay);
+
+  // Highlight box that follows the cursor
+  pickerHighlight = document.createElement('div');
+  pickerHighlight.id = 'specscout-picker-highlight';
+  pickerHighlight.style.cssText = `
+    position: fixed; pointer-events: none; z-index: 2147483646;
+    border: 3px solid #0ea5e9; border-radius: 8px;
+    background: rgba(14, 165, 233, 0.08);
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.3);
+    transition: all 0.15s ease;
+    display: none;
+  `;
+  document.body.appendChild(pickerHighlight);
+}
+
+/**
+ * Handle mousemove during picker mode — highlight product cards
+ */
+function onPickerMouseMove(e: MouseEvent) {
+  const target = e.target as Element;
+  const card = findProductAncestor(target);
+
+  if (card && card !== currentHoveredEl) {
+    currentHoveredEl = card;
+    const rect = card.getBoundingClientRect();
+    if (pickerHighlight) {
+      pickerHighlight.style.display = 'block';
+      pickerHighlight.style.top = rect.top - 3 + 'px';
+      pickerHighlight.style.left = rect.left - 3 + 'px';
+      pickerHighlight.style.width = rect.width + 6 + 'px';
+      pickerHighlight.style.height = rect.height + 6 + 'px';
+    }
+  } else if (!card) {
+    currentHoveredEl = null;
+    if (pickerHighlight) pickerHighlight.style.display = 'none';
+  }
+}
+
+/**
+ * Handle click during picker mode — select the product
+ */
+function onPickerClick(e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const target = e.target as Element;
+  const card = findProductAncestor(target);
+
+  if (card) {
+    const productData = extractFromCard(card);
+    // Send result back to extension
+    chrome.runtime.sendMessage({
+      action: 'productPicked',
+      productData
+    });
+    deactivatePicker();
+  }
+}
+
+/**
+ * Handle ESC key to cancel picker
+ */
+function onPickerKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    chrome.runtime.sendMessage({ action: 'pickerCancelled' });
+    deactivatePicker();
+  }
+}
+
+/**
+ * Activate the product picker mode
+ */
+function activatePicker() {
+  if (pickerActive) return;
+  pickerActive = true;
+  createPickerUI();
+  document.addEventListener('mousemove', onPickerMouseMove, true);
+  document.addEventListener('click', onPickerClick, true);
+  document.addEventListener('keydown', onPickerKeyDown, true);
+  document.body.style.cursor = 'crosshair';
+}
+
+/**
+ * Deactivate the product picker mode and clean up
+ */
+function deactivatePicker() {
+  pickerActive = false;
+  document.removeEventListener('mousemove', onPickerMouseMove, true);
+  document.removeEventListener('click', onPickerClick, true);
+  document.removeEventListener('keydown', onPickerKeyDown, true);
+  document.body.style.cursor = '';
+  currentHoveredEl = null;
+  pickerOverlay?.remove();
+  pickerHighlight?.remove();
+  pickerOverlay = null;
+  pickerHighlight = null;
+}
+
+// ─── Message Listener ────────────────────────────────────────────────
+
+// Listen for messages from side panel / background
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === 'extractProduct') {
     const productData = extractProductData();
-    sendResponse({ productData });
+    const pageType = classifyPage();
+    sendResponse({ productData, pageType });
+  } else if (request.action === 'startPicker') {
+    activatePicker();
+    sendResponse({ ok: true });
+  } else if (request.action === 'stopPicker') {
+    deactivatePicker();
+    sendResponse({ ok: true });
   }
   return true; // Keep channel open for async response
 });
-
-// Export for testing/debugging
-if (typeof window !== 'undefined') {
-  (window as any).extractProductData = extractProductData;
-}

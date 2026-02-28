@@ -4,10 +4,10 @@
  * Shows interactive DNA list with per-item delete and reset.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useStore } from "~store";
 import { analyzeProduct, getUserProfile, deleteDnaItem, resetDna } from "~api";
-import { Search, AlertCircle, RotateCcw, User, Trash2 } from "lucide-react";
+import { Search, AlertCircle, RotateCcw, User, Trash2, MousePointerClick } from "lucide-react";
 import type { DnaItem } from "~types";
 
 const DNA_CAP = 50;
@@ -29,6 +29,8 @@ export function ProductAnalysis() {
 
   const [productDetected, setProductDetected] = useState(false);
   const [productTitle, setProductTitle] = useState('');
+  const [pageType, setPageType] = useState<'product' | 'listing' | 'unknown'>('unknown');
+  const [pickerActive, setPickerActive] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   // Resolve DNA items: prefer structured dnaItems, fall back to favoriteItems
@@ -46,6 +48,21 @@ export function ProductAnalysis() {
 
   useEffect(() => {
     checkForProduct();
+
+    // Listen for picker results from content script (via background)
+    const messageListener = (message: any) => {
+      if (message.action === 'productPicked' && message.productData) {
+        setPickerActive(false);
+        setProductDetected(true);
+        setProductTitle(message.productData.title);
+        setCurrentProduct(message.productData);
+        setPageType('product'); // Treat picked product as a product page
+      } else if (message.action === 'pickerCancelled') {
+        setPickerActive(false);
+      }
+    };
+    chrome.runtime.onMessage.addListener(messageListener);
+    return () => chrome.runtime.onMessage.removeListener(messageListener);
   }, []);
 
   const checkForProduct = async () => {
@@ -57,6 +74,9 @@ export function ProductAnalysis() {
       }
 
       const response = await chrome.tabs.sendMessage(tab.id, { action: 'extractProduct' });
+      const detectedPageType = response?.pageType || 'unknown';
+      setPageType(detectedPageType);
+
       if (response?.productData) {
         setProductDetected(true);
         setProductTitle(response.productData.title);
@@ -71,6 +91,18 @@ export function ProductAnalysis() {
     }
   };
 
+  const handleStartPicker = async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return;
+      setPickerActive(true);
+      await chrome.tabs.sendMessage(tab.id, { action: 'startPicker' });
+    } catch (err) {
+      console.error('Error starting picker:', err);
+      setPickerActive(false);
+    }
+  };
+
   const handleAnalyze = async () => {
     if (!userProfile?.userId) {
       setError('User profile not found. Please re-onboard.');
@@ -82,14 +114,25 @@ export function ProductAnalysis() {
       setError(null);
       setAppState('analyzing');
 
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const response = await chrome.tabs.sendMessage(tab.id!, { action: 'extractProduct' });
+      // Use already-stored product (from picker or auto-detection)
+      // Only re-extract if we don't have product data yet
+      let title = '';
+      let description = '';
+      const stored = useStore.getState().currentProduct;
 
-      if (!response?.productData) {
-        throw new Error('Could not extract product information');
+      if (stored?.title) {
+        title = stored.title;
+        description = stored.description;
+      } else {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const response = await chrome.tabs.sendMessage(tab.id!, { action: 'extractProduct' });
+        if (!response?.productData) {
+          throw new Error('Could not extract product information');
+        }
+        title = response.productData.title;
+        description = response.productData.description;
       }
 
-      const { title, description } = response.productData;
       const result = await analyzeProduct(userProfile.userId, title, description);
 
       setMatchResult({
@@ -217,23 +260,60 @@ export function ProductAnalysis() {
           </button>
         </div>
       ) : (
-        <div className="card bg-gray-50 space-y-3">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-gray-700">No Product Detected</h3>
-              <p className="text-xs text-gray-500">
-                Navigate to a product page on an e-commerce site to analyze it against your taste profile.
-              </p>
+        <div className="space-y-4">
+          {/* Listing page — offer the product picker */}
+          {pageType === 'listing' ? (
+            <div className="card bg-amber-50 border-amber-200 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <MousePointerClick className="w-5 h-5 text-amber-600" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-amber-900">Product Listing Page</h3>
+                  <p className="text-xs text-amber-700">
+                    Multiple products found on this page. Click the button below, then click on a specific product to analyze it.
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={checkForProduct}
-                className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1 mt-2"
+                onClick={handleStartPicker}
+                disabled={pickerActive}
+                className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
               >
-                <RotateCcw className="w-3 h-3" />
-                Refresh
+                {pickerActive ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Click a product on the page...
+                  </>
+                ) : (
+                  <>
+                    <MousePointerClick className="w-4 h-4" />
+                    Pick a Product
+                  </>
+                )}
               </button>
             </div>
-          </div>
+          ) : (
+            /* Unknown page — no products at all */
+            <div className="card bg-gray-50 space-y-3">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-gray-700">No Product Detected</h3>
+                  <p className="text-xs text-gray-500">
+                    Navigate to a product page on an e-commerce site to analyze it against your taste profile.
+                  </p>
+                  <button
+                    onClick={checkForProduct}
+                    className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1 mt-2"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
