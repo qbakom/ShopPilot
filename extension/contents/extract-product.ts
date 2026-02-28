@@ -173,7 +173,7 @@ export function extractProductData(): ProductData | null {
 }
 
 // Listen for messages from side panel
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === 'extractProduct') {
     const productData = extractProductData();
     sendResponse({ productData });

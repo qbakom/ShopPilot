@@ -150,18 +150,24 @@ class AIService:
         self,
         user_vector: np.ndarray,
         product_title: str,
-        product_description: str
+        product_description: str,
+        favorite_items: List[str] = None
     ) -> dict:
         """
         Analyze a product against a user's taste profile.
+
+        Compares the product vector against:
+        1. The user's centroid (overall taste) for the main score
+        2. Each individual favorite item to identify the closest match
 
         Args:
             user_vector: User's centroid vector
             product_title: Title of the product
             product_description: Description of the product
+            favorite_items: Original favorite item descriptions for per-item comparison
 
         Returns:
-            Dictionary with match_score (0-1), percentage (0-100), and label
+            Dictionary with match_score (0-1), percentage (0-100), label, and reasoning
         """
         # Combine title and description for richer context
         product_text = f"{product_title}. {product_description}"
@@ -169,21 +175,78 @@ class AIService:
         # Encode product text
         product_vector = self.encode_texts([product_text])[0]
 
-        # Calculate similarity
+        # Calculate similarity against centroid
         similarity = self.calculate_similarity(user_vector, product_vector)
 
         # Get label
         label = self.get_match_label(similarity)
 
+        # Build reasoning by comparing against each individual favorite item
+        reasoning = self._build_reasoning(
+            product_vector, product_title, label, similarity, favorite_items
+        )
+
         result = {
             "match_score": similarity,
             "percentage": round(similarity * 100, 1),
             "label": label,
-            "reasoning": f"Based on your style preferences, this product is a {label.lower()}."
+            "reasoning": reasoning
         }
 
         logger.info(f"Product analysis: {result}")
         return result
+
+    def _build_reasoning(
+        self,
+        product_vector: np.ndarray,
+        product_title: str,
+        label: str,
+        overall_score: float,
+        favorite_items: List[str] = None
+    ) -> str:
+        """
+        Generate meaningful reasoning by comparing the product against
+        each individual favorite item to find the closest stylistic match.
+        """
+        if not favorite_items:
+            return f"This product scores as a '{label}' against your overall style profile."
+
+        # Encode each favorite item individually and compare
+        item_vectors = self.encode_texts(favorite_items)
+        item_scores = []
+        for i, item_vec in enumerate(item_vectors):
+            score = self.calculate_similarity(item_vec, product_vector)
+            item_scores.append((favorite_items[i], score))
+
+        # Sort by similarity (highest first)
+        item_scores.sort(key=lambda x: x[1], reverse=True)
+        best_item, best_score = item_scores[0]
+        worst_item, worst_score = item_scores[-1]
+
+        best_pct = round(best_score * 100)
+        worst_pct = round(worst_score * 100)
+
+        # Truncate item descriptions for readability
+        best_short = best_item[:60] + "..." if len(best_item) > 60 else best_item
+        worst_short = worst_item[:60] + "..." if len(worst_item) > 60 else worst_item
+
+        if overall_score >= 0.70:
+            return (
+                f'"{product_title}" is most similar to your "{best_short}" '
+                f"({best_pct}% match). It aligns well with your overall taste profile."
+            )
+        elif overall_score >= 0.55:
+            return (
+                f'This product shares some qualities with your "{best_short}" '
+                f"({best_pct}% match), but diverges from your "
+                f'"{worst_short}" ({worst_pct}% match).'
+            )
+        else:
+            return (
+                f"This product doesn't closely match any of your favorites. "
+                f'Closest is your "{best_short}" at {best_pct}%, '
+                f"suggesting it's outside your usual style."
+            )
 
 
 # Global instance (loaded once for performance)

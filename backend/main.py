@@ -194,11 +194,13 @@ async def analyze_product(request: AnalyzeRequest):
         # Get AI service
         ai_service = get_ai_service()
 
-        # Analyze product
+        # Analyze product (pass favorite items for per-item reasoning)
+        favorite_items = user_data["metadata"].get("favorite_items", [])
         result = ai_service.analyze_product(
             user_vector=user_vector,
             product_title=request.product_title,
-            product_description=request.product_description
+            product_description=request.product_description,
+            favorite_items=favorite_items
         )
 
         logger.info(f"Analysis complete: {result['percentage']}% match")
